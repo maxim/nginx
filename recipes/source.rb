@@ -66,7 +66,7 @@ user node['nginx']['user'] do
 end
 
 node.run_state['nginx_force_recompile'] = false
-node.run_state['nginx_configure_flags'] = 
+node.run_state['nginx_configure_flags'] =
   node['nginx']['source']['default_configure_flags'] | node['nginx']['configure_flags']
 
 node['nginx']['source']['modules'].each do |ngx_module|
@@ -84,11 +84,48 @@ bash "compile_nginx_source" do
     make && make install
     rm -f #{node['nginx']['dir']}/nginx.conf
   EOH
-  
+
   not_if do
+    cur_version = nil
+    cur_config_args = []
+
+    installed = begin
+      cur_version = `#{node['nginx']['binary']} -v 2>&1`[/nginx\/(.+)/, 1]
+      cur_config_args = `#{node['nginx']['binary']} -V 2>&1`[/configure arguments\: (.*)/, 1].split(/\s/).sort
+      true
+    rescue
+      false
+    end
+
+    matched_version = (cur_version == node['nginx']['version'])
+    matched_config_flags = (cur_config_args == configure_flags.sort)
+
+    if nginx_force_recompile
+      Chef::Log.info("Forcing nginx to be recompiled")
+    end
+
+    if installed
+      Chef::Log.info("Found installed nginx v#{cur_version}")
+    else
+      Chef::Log.info("Nginx is not installed")
+    end
+
+    if matched_version
+      Chef::Log.info("Nginx desired and installed versions match: #{node['nginx']['version']} == #{cur_version}")
+    else
+      Chef::Log.info("Nginx desired version is #{node['nginx']['version']} but installed version is #{cur_version}")
+    end
+
+    if matched_config_flags
+      Chef::Log.info("Nginx desired and installed config flags match: #{configure_flags.sort.inspect} == #{cur_config_args.inspect}")
+    else
+      Chef::Log.info("Nginx desired config flags are #{configure_flags.sort.inspect} but it's installed with #{cur_config_args.inspect}")
+    end
+
     nginx_force_recompile == false &&
-      node.automatic_attrs['nginx']['version'] == node['nginx']['version'] &&
-      node.automatic_attrs['nginx']['configure_arguments'].sort == configure_flags.sort
+      installed &&
+      matched_version &&
+      matched_config_flags
   end
 end
 
@@ -132,7 +169,7 @@ when "bluepill"
   end
 else
   node.set['nginx']['daemon_disable'] = false
-  
+
   template "/etc/init.d/nginx" do
     source "nginx.init.erb"
     owner "root"
